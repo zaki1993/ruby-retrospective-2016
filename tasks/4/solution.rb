@@ -91,12 +91,14 @@ RSpec.describe 'Version' do
       expect(test_obj.components).to eq [1, 2, 3]
     end
   end
+
   describe "#to_s" do
     it "return the version as string" do
       version = Version.new('1.1.1.0')
       expect(version.to_s).to eq '1.1.1'
     end
   end
+
   describe 'Version::Range' do
     describe '#include?' do
       it 'check if a range includes a version' do
