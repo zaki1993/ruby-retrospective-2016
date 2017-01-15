@@ -1,139 +1,156 @@
 module Store
-  def initialize(storage = nil)
-    @id_counter = 1
-    @store = storage
+  private
+  def next_id
+    @id += 1
   end
 
-  def self.not_implemented(method)
-    raise NotImplementedError.new "method #{method} not implemented"
-  end
-
-  def self.hash_matches(tested, tester)
-    match = true
-    tester.each { |key, value| match &= tested[key] == value }
-    match
-  end
-
-  def storage
-    @store
-  end
-
-  def add_id_to_record(record)
-    id = @id_counter
-    @id_counter = id + 1
-    record.merge({id: id})
-  end
-
-  def create
-    Store.not_implemented "create"
-  end
-
-  def find
-    Store.not_implemented "find"
-  end
-
-  def update
-    Store.not_implemented "update"
-  end
-
-  def delete
-    Store.not_implementedd "delete"
+  def matches?(record, query)
+    query.all? { |key, value| record[key] == value }
   end
 end
 
 class ArrayStore
   include Store
 
+  attr_reader :storage
+
   def initialize
-    super([])
+    @id = 0
+    @storage = []
   end
 
   def create(record)
-    @store.push add_id_to_record(record)
+    id = record[:id] || next_id
+    record[:id] = id
+    @storage.push(record)
   end
 
-  def find(record)
-    @store.select { |tested| Store.hash_matches tested, record }
+  def find(query)
+    @storage.select { |record| matches?(record, query) }
   end
 
   def update(id, record)
-    index = @store.index { |tested| tested[:id] == id }
-    @store[index] = @store[index].merge record
+    index = @storage.index { |record| record[:id] == id }
+    @storage[index].merge!(record)
   end
 
-  def delete(record)
-    @store.delete_if { |tested| Store.hash_matches tested, record }
+  def delete(query)
+    @storage.delete_if { |record| matches?(record, query) }
   end
 end
 
 class HashStore
   include Store
 
+  attr_reader :storage
+
   def initialize
-    super {}
+    @id = 0
+    @storage = {}
   end
 
   def create(record)
-    record_with_id = add_id_to_record record
-    @store[record_with_id[:id]] = record_with_id
+    id = record[:id] || next_id
+    record[:id] = id
+    @storage[id] = record
   end
 
-  def find(record)
-    @store.select { |_, tested| Store.hash_matches tested, record }
+  def find(query)
+    @storage.values.select { |record| matches?(record, query) }
   end
 
   def update(id, record)
-    @store[id] = @store[id].merge record
+    @storage[id].merge!(record)
   end
 
-  def delete(record)
-    @store.delete_if { |_, tested| Store.hash_matches tested, record }
+  def delete(query)
+    @storage.delete_if { |_, record| matches?(record, query) }
+  end
+end
+
+module Model
+  def attributes(*attributes)
+    return @attributes if attributes.empty?
+    init_attributes(attributes)
+  end
+
+  def data_store(*args)
+    return @data_store if args.empty?
+    @data_store = args[0]
+  end
+
+  def where(query)
+    query.each do |key, _|
+      unless (attributes.include? key) || key == :id
+        raise DataModel::UnknownAttributeError.new("Unknown attribute #{key}")
+      end
+    end
+    @data_store.find(query)
+    .map { |record| new(record) }
+  end
+
+  private
+  def init_attributes(attributes)
+    @attributes = attributes
+    attributes.each do |attribute|
+      self.class_eval { attr_accessor attribute }
+      define_singleton_method "find_by_#{attribute}" do |value|
+        @data_store.find(attribute => value)
+        .map { |record| new(record) }
+      end
+    end
+  end
+end
+
+module Exceptions
+  class DeleteUnsavedRecordError < StandardError
+  end
+
+  class UnknownAttributeError < StandardError
   end
 end
 
 class DataModel
-  class<<self
-  attr_accessor :store_container, :attributes_container, :id
+  extend Model
+  include Exceptions
+  attr_reader :id
 
-  def initialize(hash)
-    hash.each { |key, value| instance_variable_set "@#{key}", value }
-    @id = hash[:id]
-  end
-
-  def attributes(*attrs)
-    return @attributes if attrs.empty?
-    @attributes = attrs
-    attrs.each do |attr|
-      define_method("#{attr}=") { |val| instance_variable_set "@#{attr}", val }
-      define_method(attr) { instance_variable_get "@#{attr}" }
-      define_method("find_by_#{attr}") { |v| puts attr => v }
+  def initialize(attributes = {})
+    attributes.each do |key, value|
+      instance_variable_set('@' + key.to_s, value) if self.respond_to? key
     end
   end
 
-  def to_h
-    hash = {}
-    @@attributes.each { |attr| hash[attr] = instance_variable_get "@#{attr}" }
-    hash
+  def ==(other)
+    return false if other.nil?
+    if !(@id.nil? && other.id.nil?)
+      @id == other.id
+    else
+      object_id == other.object_id
+    end
   end
 
   def save
-    if @id == nil
-      @store_container.create.to_h
+    if @id.nil?
+      record = self.class.data_store.create(to_hash)
+      @id = record[:id]
+      self
     else
-      @store_container.update
+      self.class.data_store.update(@id, to_hash)
     end
   end
 
-  def data_store(store_type)
-    @store_container = store_type unless store_container.nil?
-    @store_container
+  def delete
+    raise DeleteUnsavedRecordError.new if @id.nil?
+    self.class.data_store.delete(id: @id)
   end
-  end
-end
 
-class User < DataModel
-  attributes :first_name, :last_name
-  data_store HashStore.new
-  def initialize(hash_methods = {})
+  private
+  def to_hash
+    hash = {id: @id}
+    self.class.attributes.each do |attr|
+      hash[attr] = self.public_send(attr)
+    end
+    hash
   end
 end

@@ -1,48 +1,70 @@
+module ParserHelpers
+  def parse_arguments(command_runner, argv)
+    idx = 0
+    argv.each do |argument|
+      next if argument[0] == '-'
+        @arguments[@arguments.keys[idx]].call(command_runner, argument)
+      idx += 1
+    end
+  end
+
+  def parse_options(command_runner, argv)
+    @options.each do |key, value|
+      if argv.include?("-#{value[1]}") || argv.include?("--#{key}")
+        value[0].call(command_runner, true)
+      end
+    end
+  end
+
+  def parse_options_with_parameters(command_runner, argv)
+    @options_with_parameter.each do |key, value|
+      argv.each do |argument|
+        essentials = argument[2..-1]
+        value[1] == argument[1] && value[0].call(command_runner, essentials)
+        opt_name, opt_param = essentials.split('=')
+        key == opt_name && value[0].call(command_runner, opt_param)
+      end
+    end
+  end
+end
 class CommandParser
+  include ParserHelpers
+
   def initialize(command_name)
     @command_name = command_name
-    @args = []
-    @opts = []
-    @a_blocks = []
-    @o_blocks = {}
-    @a_idx = 0
-    @o_idx = 0
-    @num_o = 0
+    @arguments = {}
+    @options = {}
+    @options_with_parameter = {}
   end
 
-  def argument(argument_name, &arg_block)
-    @args << argument_name
-    @args
-    @a_blocks << arg_block
+  def argument(name, &block)
+    @arguments[name] = block
   end
 
-  def option(short, long, helper_str, &opts_block)
-    @o_blocks[long] = opts_block
-    @opts << [short, long, helper_str]
-    @num_o += 1
-    @opts
+  def option(short_name, long_name, text, &block)
+    @options[long_name] = [block, short_name, text]
   end
 
-  def option_with_parameter(short, long, helper_str, parameter)
-  end
-
-  def check_opt(value, command_runner)
-    if @num_o != 0 && @o_blocks.include?(value[2, value.length])
-      @o_blocks[value[2, value.length]].call(command_runner, true)
-    elsif @num_o != 0 && @opts[@o_idx].include?(value[1, value.length])
-      @o_blocks[@opts[@o_idx][1]].call(command_runner, true)
-      @o_idx += 1
-    end
+  def option_with_parameter(short_name, long_name, text, plholder, &block)
+    @options_with_parameter[long_name] = [block, short_name, text, plholder]
   end
 
   def parse(command_runner, argv)
-    argv.each do |value|
-      if value.start_with?('-')
-        check_opt(value, command_runner)
-      else
-        @a_blocks[@a_idx].call(command_runner, value)
-        @a_idx += 1
-      end
+    parse_arguments(command_runner, argv)
+    parse_options(command_runner, argv)
+    parse_options_with_parameters(command_runner, argv)
+  end
+
+  def help
+    res = "Usage: #{@command_name} "
+    @arguments.each { |argument, _| res << '[' + argument + '] ' }
+    res = res.chop
+    @options.each do |name, info|
+      res << "\n    -" + info[1] + ', --' + name + ' ' + info[2]
     end
+    @options_with_parameter.each do |name, info|
+      res << "\n    -" + info[1] + ', --' + name + '=' + info[3] + ' ' + info[2]
+    end
+    res
   end
 end
