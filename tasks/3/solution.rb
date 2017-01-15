@@ -27,6 +27,7 @@ module ParserHelpers
     end
   end
 end
+
 class CommandParser
   include ParserHelpers
 
